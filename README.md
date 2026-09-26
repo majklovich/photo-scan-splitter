@@ -26,3 +26,15 @@ python3 app.py
 6. Choose **Back to Gallery** to return to the thumbnails and open the next scan.
 
 The output files are ordered from left to right and top to bottom. Supported input formats are JPG, PNG, TIFF, BMP, and WebP. The original scan is not changed.
+
+## Build a macOS app
+
+To create an application that can be opened from Finder without Terminal:
+
+```bash
+python3 -m pip install pyinstaller
+chmod +x build_mac_app.sh
+./build_mac_app.sh
+```
+
+The finished application will be at `dist/PhotoScanSplitter.app`. Double-click it in Finder, or drag it to the Applications folder. The build must be created on macOS; build it again after changing the source code.
