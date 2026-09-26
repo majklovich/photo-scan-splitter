@@ -10,7 +10,8 @@ class PhotoSplitter:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("Rozdělení skenu na fotografie")
+        self.root.title("Split Scan into Photos")
+        self.root.geometry("900x700")
         self.root.minsize(680, 560)
 
         self.image = None
@@ -31,7 +32,7 @@ class PhotoSplitter:
 
         heading = ttk.Label(
             container,
-            text="Rozdělení skenu na 4 fotografie",
+            text="Split a Scan into 4 Photos",
             font=("TkDefaultFont", 16, "bold"),
         )
         heading.grid(row=0, column=0, sticky="w")
@@ -39,10 +40,10 @@ class PhotoSplitter:
         top_bar = ttk.Frame(container)
         top_bar.grid(row=1, column=0, sticky="ew", pady=(12, 8))
         self.open_button = ttk.Button(
-            top_bar, text="Vybrat sken...", command=self.open_image
+            top_bar, text="Choose Scan...", command=self.open_image
         )
         self.open_button.pack(side="left")
-        self.file_label = ttk.Label(top_bar, text="Není vybraný žádný obrázek")
+        self.file_label = ttk.Label(top_bar, text="No image selected")
         self.file_label.pack(side="left", padx=(12, 0))
 
         self.canvas = tk.Canvas(
@@ -53,14 +54,22 @@ class PhotoSplitter:
         )
         self.canvas.grid(row=2, column=0, sticky="nsew")
         self.canvas.bind("<Configure>", self._draw_preview)
+        self.canvas_open_button = ttk.Button(
+            self.canvas,
+            text="Choose Scan...",
+            command=self.open_image,
+        )
+        self.canvas_open_button_window = self.canvas.create_window(
+            0, 0, window=self.canvas_open_button, state="hidden"
+        )
 
         controls = ttk.Frame(container)
         controls.grid(row=3, column=0, sticky="ew", pady=(12, 0))
         controls.columnconfigure(0, weight=1)
         controls.columnconfigure(1, weight=1)
 
-        ttk.Label(controls, text="Svislý řez").grid(row=0, column=0, sticky="w")
-        ttk.Label(controls, text="Vodorovný řez").grid(row=0, column=1, sticky="w")
+        ttk.Label(controls, text="Vertical cut").grid(row=0, column=0, sticky="w")
+        ttk.Label(controls, text="Horizontal cut").grid(row=0, column=1, sticky="w")
         self.vertical_scale = ttk.Scale(
             controls,
             from_=10,
@@ -80,7 +89,7 @@ class PhotoSplitter:
 
         self.save_button = ttk.Button(
             container,
-            text="Rozdělit a uložit 4 fotografie...",
+            text="Split and Save 4 Photos...",
             command=self.save_photos,
             state="disabled",
         )
@@ -88,10 +97,10 @@ class PhotoSplitter:
 
     def open_image(self):
         path = filedialog.askopenfilename(
-            title="Vyberte naskenovanou fotografii",
+            title="Choose a scanned page",
             filetypes=[
-                ("Obrázky", "*.jpg *.jpeg *.png *.tif *.tiff *.bmp *.webp"),
-                ("Všechny soubory", "*"),
+                ("Images", "*.jpg *.jpeg *.png *.tif *.tiff *.bmp *.webp"),
+                ("All files", "*"),
             ],
         )
         if not path:
@@ -105,7 +114,7 @@ class PhotoSplitter:
                 else:
                     image = image.copy()
         except (OSError, ValueError) as error:
-            messagebox.showerror("Nelze otevřít obrázek", str(error))
+            messagebox.showerror("Cannot open image", str(error))
             return
 
         self.image = image
@@ -115,9 +124,24 @@ class PhotoSplitter:
         self._draw_preview()
 
     def _draw_preview(self, _value=None):
+        self.canvas.delete("preview")
+        self.canvas.delete("empty-message")
         if self.image is None:
+            center_x = max(self.canvas.winfo_width(), 1) / 2
+            center_y = max(self.canvas.winfo_height(), 1) / 2
+            self.canvas.create_text(
+                center_x,
+                center_y - 26,
+                text="Choose a scanned page",
+                fill="#333333",
+                font=("TkDefaultFont", 13, "bold"),
+                tags="empty-message",
+            )
+            self.canvas.coords(self.canvas_open_button_window, center_x, center_y + 18)
+            self.canvas.itemconfigure(self.canvas_open_button_window, state="normal")
             return
 
+        self.canvas.itemconfigure(self.canvas_open_button_window, state="hidden")
         canvas_width = max(self.canvas.winfo_width(), 1)
         canvas_height = max(self.canvas.winfo_height(), 1)
         available = (
@@ -133,19 +157,24 @@ class PhotoSplitter:
         bottom = top + preview.height
         self.preview_box = (left, top, right, bottom)
 
-        self.canvas.delete("all")
-        self.canvas.create_image(left, top, image=self.preview_photo, anchor="nw")
+        self.canvas.create_image(
+            left, top, image=self.preview_photo, anchor="nw", tags="preview"
+        )
         cut_x = left + preview.width * self.vertical_position.get() / 100
         cut_y = top + preview.height * self.horizontal_position.get() / 100
-        self.canvas.create_line(cut_x, top, cut_x, bottom, fill="#d8342a", width=2)
-        self.canvas.create_line(left, cut_y, right, cut_y, fill="#d8342a", width=2)
+        self.canvas.create_line(
+            cut_x, top, cut_x, bottom, fill="#d8342a", width=2, tags="preview"
+        )
+        self.canvas.create_line(
+            left, cut_y, right, cut_y, fill="#d8342a", width=2, tags="preview"
+        )
 
     def save_photos(self):
         if self.image is None or self.image_path is None:
             return
 
         output_dir = filedialog.askdirectory(
-            title="Vyberte složku pro uložené fotografie",
+            title="Choose a folder for the saved photos",
             initialdir=os.path.dirname(self.image_path),
         )
         if not output_dir:
@@ -160,12 +189,12 @@ class PhotoSplitter:
             (0, cut_y, cut_x, height),
             (cut_x, cut_y, width, height),
         )
-        paths = [os.path.join(output_dir, "fotografie_{}.png".format(i)) for i in range(1, 5)]
+        paths = [os.path.join(output_dir, "photo_{}.png".format(i)) for i in range(1, 5)]
 
         existing = [path for path in paths if os.path.exists(path)]
         if existing and not messagebox.askyesno(
-            "Soubory už existují",
-            "Některé výstupní soubory už existují. Chcete je přepsat?",
+            "Files already exist",
+            "Some output files already exist. Do you want to overwrite them?",
         ):
             return
 
@@ -173,11 +202,11 @@ class PhotoSplitter:
             for box, path in zip(boxes, paths):
                 self.image.crop(box).save(path, format="PNG")
         except OSError as error:
-            messagebox.showerror("Uložení se nezdařilo", str(error))
+            messagebox.showerror("Could not save photos", str(error))
             return
 
         messagebox.showinfo(
-            "Hotovo", "Uloženy 4 fotografie do složky:\n{}".format(output_dir)
+            "Done", "4 photos were saved to:\n{}".format(output_dir)
         )
 
 
