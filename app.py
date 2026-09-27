@@ -15,14 +15,19 @@ class PhotoSplitter:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("Split Scan into Photos")
+        self.root.title("photo-scan-splitter")
         self.root.geometry("1000x720")
         self.root.minsize(760, 560)
 
         self.scan_paths = []
         self.gallery_selected_index = None
+        self.gallery_selected_indices = set()
         self.gallery_thumbnails = []
         self.gallery_cards = []
+        self.gallery_item_boxes = []
+        self.marquee_start = None
+        self.marquee_item = None
+        self.marquee_base_selection = set()
         self.image = None
         self.image_path = None
         self.preview_photo = None
@@ -99,14 +104,38 @@ class PhotoSplitter:
         )
         self.gallery_scrollbar.grid(row=0, column=1, sticky="ns")
         self.gallery_canvas.configure(yscrollcommand=self.gallery_scrollbar.set)
-        self.gallery_inner = ttk.Frame(self.gallery_canvas)
-        self.gallery_window = self.gallery_canvas.create_window(
-            0, 0, window=self.gallery_inner, anchor="nw"
+        self.gallery_canvas.bind("<Configure>", self._draw_gallery)
+        self.gallery_canvas.bind("<ButtonPress-1>", self._gallery_mouse_down)
+        self.gallery_canvas.bind(
+            "<Command-ButtonPress-1>",
+            lambda event: self._gallery_mouse_down(event, toggle=True),
         )
-        self.gallery_inner.bind("<Configure>", self._update_gallery_scroll)
-        self.gallery_canvas.bind("<Configure>", self._resize_gallery_inner)
+        self.gallery_canvas.bind(
+            "<Control-ButtonPress-1>",
+            lambda event: self._gallery_mouse_down(event, toggle=True),
+        )
+        self.gallery_canvas.bind("<B1-Motion>", self._gallery_mouse_drag)
+        self.gallery_canvas.bind("<ButtonRelease-1>", self._gallery_mouse_up)
         self.gallery_canvas.bind("<Double-Button-1>", self._open_gallery_item)
+        self.gallery_canvas.bind("<MouseWheel>", self._scroll_gallery)
+        self.gallery_canvas.bind("<TouchpadScroll>", self._scroll_gallery_touchpad)
+        self.root.bind_all("<MouseWheel>", self._scroll_gallery)
+        self.root.bind_all("<TouchpadScroll>", self._scroll_gallery_touchpad)
+        self.root.bind_all(
+            "<Button-4>", lambda _event: self._scroll_gallery_by(-1)
+        )
+        self.root.bind_all(
+            "<Button-5>", lambda _event: self._scroll_gallery_by(1)
+        )
+        self.root.bind_all("<Command-BackSpace>", self._remove_selected_key)
+        self.root.bind_all("<Delete>", self._remove_selected_key)
+        self.root.bind_all("<BackSpace>", self._remove_selected_key)
         self._draw_gallery()
+        ttk.Label(
+            self.gallery_frame,
+            text="photo-scan-splitter 1.0 © Michal G 2026",
+            font=("TkDefaultFont", 9),
+        ).grid(row=3, column=0, pady=(0, 10))
 
         self.editor_frame = ttk.Frame(self.root, padding=16)
         self.editor_frame.columnconfigure(0, weight=1)
@@ -195,6 +224,11 @@ class PhotoSplitter:
         self.save_button.grid(
             row=4, column=0, sticky="e", padx=16, pady=(8, 16)
         )
+        ttk.Label(
+            self.editor_frame,
+            text="photo-scan-splitter 1.0 © Michal G 2026",
+            font=("TkDefaultFont", 9),
+        ).grid(row=5, column=0, pady=(0, 4))
 
     def add_images(self):
         paths = filedialog.askopenfilenames(
@@ -231,16 +265,84 @@ class PhotoSplitter:
             self._select_gallery_item(0)
 
     def open_selected(self):
-        if self.gallery_selected_index is not None:
+        if len(self.gallery_selected_indices) == 1:
             self._open_path(self.gallery_selected_index)
 
     def _open_gallery_item(self, event):
-        item = self.gallery_canvas.find_withtag("current")
-        if not item:
+        index = self._gallery_item_at(event.x, event.y)
+        if index is not None:
+            self._open_path(index)
+
+    def _gallery_item_at(self, x, y):
+        canvas_x = self.gallery_canvas.canvasx(x)
+        canvas_y = self.gallery_canvas.canvasy(y)
+        for item in reversed(
+            self.gallery_canvas.find_overlapping(canvas_x, canvas_y, canvas_x, canvas_y)
+        ):
+            for tag in self.gallery_canvas.gettags(item):
+                if tag.startswith("gallery-item-"):
+                    return int(tag.rsplit("-", 1)[1])
+        return None
+
+    def _gallery_mouse_down(self, event, toggle=False):
+        index = self._gallery_item_at(event.x, event.y)
+        if index is not None:
+            self.marquee_start = None
+            self._select_gallery_item(index, toggle=toggle)
+            return "break"
+
+        self.marquee_start = (
+            self.gallery_canvas.canvasx(event.x),
+            self.gallery_canvas.canvasy(event.y),
+        )
+        self.marquee_base_selection = (
+            set(self.gallery_selected_indices) if toggle else set()
+        )
+        if not toggle:
+            self._set_gallery_selection(set())
+        if self.marquee_item is not None:
+            self.gallery_canvas.delete(self.marquee_item)
+        self.marquee_item = self.gallery_canvas.create_rectangle(
+            self.marquee_start[0],
+            self.marquee_start[1],
+            self.marquee_start[0],
+            self.marquee_start[1],
+            outline=self.SYSTEM_ACCENT,
+            dash=(3, 2),
+            width=1,
+            tags="marquee",
+        )
+        return "break"
+
+    def _gallery_mouse_drag(self, event):
+        if self.marquee_start is None or self.marquee_item is None:
             return
-        index = self.gallery_canvas.itemcget(item[0], "tags")
-        if index.startswith("gallery-item-"):
-            self._open_path(int(index.rsplit("-", 1)[1]))
+        current_x = self.gallery_canvas.canvasx(event.x)
+        current_y = self.gallery_canvas.canvasy(event.y)
+        start_x, start_y = self.marquee_start
+        x1, x2 = sorted((start_x, current_x))
+        y1, y2 = sorted((start_y, current_y))
+        self.gallery_canvas.coords(self.marquee_item, x1, y1, x2, y2)
+        if abs(current_x - start_x) < 4 and abs(current_y - start_y) < 4:
+            return "break"
+
+        enclosed = {
+            index
+            for index, (left, top, right, bottom) in self.gallery_item_boxes
+            if left <= x2 and right >= x1 and top <= y2 and bottom >= y1
+        }
+        self._set_gallery_selection(self.marquee_base_selection | enclosed)
+        return "break"
+
+    def _gallery_mouse_up(self, _event):
+        if self.marquee_start is None:
+            return
+        if self.marquee_item is not None:
+            self.gallery_canvas.delete(self.marquee_item)
+        self.marquee_item = None
+        self.marquee_start = None
+        self.marquee_base_selection.clear()
+        return "break"
 
     def _open_path(self, index):
         path = self.scan_paths[index]
@@ -256,6 +358,7 @@ class PhotoSplitter:
             return
 
         self.gallery_selected_index = index
+        self._set_gallery_selection({index})
         self.image = image
         self.image_path = path
         self._reset_grid_cuts()
@@ -267,42 +370,94 @@ class PhotoSplitter:
         self._draw_preview()
 
     def remove_selected(self):
-        if self.gallery_selected_index is None:
+        if not self.gallery_selected_indices:
             return
-        del self.scan_paths[self.gallery_selected_index]
+        for index in sorted(self.gallery_selected_indices, reverse=True):
+            del self.scan_paths[index]
+        self.gallery_selected_indices.clear()
         self.gallery_selected_index = None
         self._draw_gallery()
+
+    def _remove_selected_key(self, _event=None):
+        if not self.gallery_frame.winfo_ismapped() or not self.gallery_selected_indices:
+            return
+        self.remove_selected()
+        return "break"
 
     def show_gallery(self):
         self.editor_frame.pack_forget()
         self.gallery_frame.pack(fill="both", expand=True)
         self._draw_gallery()
 
-    def _select_gallery_item(self, index):
-        self.gallery_selected_index = index
-        for card_index, card in enumerate(self.gallery_cards):
-            card.configure(
-                highlightbackground=(
-                    self.SYSTEM_ACCENT if card_index == index else self.SYSTEM_BACKGROUND
-                ),
-                highlightthickness=2 if card_index == index else 1,
-            )
-        state = "normal" if self.gallery_selected_index is not None else "disabled"
-        self.open_selected_button.configure(state=state)
-        self.remove_selected_button.configure(state=state)
+    def _select_gallery_item(self, index, toggle=False):
+        selection = set(self.gallery_selected_indices)
+        if toggle and index in selection:
+            selection.remove(index)
+        elif toggle:
+            selection.add(index)
+        else:
+            selection = {index}
+        active = index if index in selection else None
+        self._set_gallery_selection(selection, active)
 
-    def _draw_gallery(self):
-        for child in self.gallery_inner.winfo_children():
-            child.destroy()
+    def _set_gallery_selection(self, indices, active=None):
+        self.gallery_selected_indices = {
+            index for index in indices if 0 <= index < len(self.scan_paths)
+        }
+        if active in self.gallery_selected_indices:
+            self.gallery_selected_index = active
+        elif self.gallery_selected_indices:
+            self.gallery_selected_index = min(self.gallery_selected_indices)
+        else:
+            self.gallery_selected_index = None
+
+        for index, card in self.gallery_cards:
+            selected = index in self.gallery_selected_indices
+            self.gallery_canvas.itemconfigure(
+                card,
+                outline=self.SYSTEM_ACCENT if selected else self.SYSTEM_BACKGROUND,
+                width=2 if selected else 1,
+            )
+        self.open_selected_button.configure(
+            state="normal" if len(self.gallery_selected_indices) == 1 else "disabled"
+        )
+        self.remove_selected_button.configure(
+            state="normal" if self.gallery_selected_indices else "disabled"
+        )
+
+    def _draw_gallery(self, _event=None):
+        self.gallery_canvas.delete("all")
         self.gallery_thumbnails = []
         self.gallery_cards = []
+        self.gallery_item_boxes = []
         if not self.scan_paths:
-            ttk.Label(
-                self.gallery_inner,
+            window_center_x = (
+                self.root.winfo_rootx()
+                + self.root.winfo_width() / 2
+                - self.gallery_canvas.winfo_rootx()
+            )
+            window_center_y = (
+                self.root.winfo_rooty()
+                + self.root.winfo_height() / 2
+                - self.gallery_canvas.winfo_rooty()
+            )
+            self.gallery_canvas.create_text(
+                self.gallery_canvas.canvasx(window_center_x),
+                self.gallery_canvas.canvasy(window_center_y),
                 text="No scans added. Choose Add Scans... to begin.",
-                padding=30,
-            ).grid(row=0, column=0, padx=20, pady=20)
+                fill=self.SYSTEM_TEXT,
+                tags="empty-gallery",
+            )
         else:
+            canvas_width = max(self.gallery_canvas.winfo_width(), 1)
+            card_width = 220
+            card_height = 190
+            spacing = 16
+            margin = 16
+            column_count = max(
+                1,
+                (canvas_width - 2 * margin + spacing) // (card_width + spacing),
+            )
             for index, path in enumerate(self.scan_paths):
                 try:
                     with Image.open(path) as source:
@@ -310,38 +465,50 @@ class PhotoSplitter:
                         thumbnail = ImageTk.PhotoImage(thumbnail.copy())
                 except (OSError, ValueError):
                     continue
-                card = tk.Frame(
-                    self.gallery_inner,
-                    background=self.SYSTEM_BACKGROUND,
-                    highlightbackground=self.SYSTEM_BACKGROUND,
-                    highlightthickness=1,
-                    padx=8,
-                    pady=8,
+                column = index % column_count
+                row = index // column_count
+                left = margin + column * (card_width + spacing)
+                top = margin + row * (card_height + spacing)
+                right = left + card_width
+                bottom = top + card_height
+                tags = ("gallery-item", "gallery-item-{}".format(index))
+                card = self.gallery_canvas.create_rectangle(
+                    left,
+                    top,
+                    right,
+                    bottom,
+                    fill="systemControlBackgroundColor",
+                    outline=(
+                        self.SYSTEM_ACCENT
+                        if index in self.gallery_selected_indices
+                        else self.SYSTEM_BACKGROUND
+                    ),
+                    width=2 if index in self.gallery_selected_indices else 1,
+                    tags=tags,
                 )
-                card.grid(row=index // 4, column=index % 4, padx=8, pady=8, sticky="n")
-                image_label = tk.Label(
-                    card, image=thumbnail, background=self.SYSTEM_BACKGROUND
+                self.gallery_canvas.create_image(
+                    left + card_width / 2,
+                    top + 12,
+                    image=thumbnail,
+                    anchor="n",
+                    tags=tags,
                 )
-                image_label.pack()
-                name_label = tk.Label(
-                    card,
+                self.gallery_canvas.create_text(
+                    left + card_width / 2,
+                    top + 158,
                     text=os.path.basename(path),
-                    background=self.SYSTEM_BACKGROUND,
-                    foreground=self.SYSTEM_TEXT,
-                    wraplength=190,
+                    fill=self.SYSTEM_TEXT,
+                    width=card_width - 20,
+                    justify="center",
+                    anchor="n",
+                    tags=tags,
                 )
-                name_label.pack(pady=(6, 0))
-                tag = "gallery-item-{}".format(index)
-                for widget in (card, image_label, name_label):
-                    widget.bind("<Button-1>", lambda _event, i=index: self._select_gallery_item(i))
-                    widget.bind("<Double-Button-1>", lambda _event, i=index: self._open_path(i))
                 self.gallery_thumbnails.append(thumbnail)
-                self.gallery_cards.append(card)
-                self.gallery_canvas.create_rectangle(
-                    0, 0, 0, 0, tags=tag
-                )
-            if self.gallery_selected_index is not None and self.gallery_selected_index < len(self.scan_paths):
-                self._select_gallery_item(self.gallery_selected_index)
+                self.gallery_cards.append((index, card))
+                self.gallery_item_boxes.append((index, (left, top, right, bottom)))
+        self._set_gallery_selection(
+            self.gallery_selected_indices, self.gallery_selected_index
+        )
         self.gallery_status.configure(
             text="{} scan{}".format(len(self.scan_paths), "" if len(self.scan_paths) == 1 else "s")
         )
@@ -349,13 +516,52 @@ class PhotoSplitter:
 
     def _update_gallery_scroll(self, _event=None):
         self.gallery_canvas.configure(scrollregion=self.gallery_canvas.bbox("all"))
-        if self.gallery_inner.winfo_reqheight() > self.gallery_canvas.winfo_height():
+        bounds = self.gallery_canvas.bbox("all")
+        content_height = bounds[3] if bounds else 0
+        if content_height > self.gallery_canvas.winfo_height():
             self.gallery_scrollbar.grid()
         else:
             self.gallery_scrollbar.grid_remove()
 
-    def _resize_gallery_inner(self, event):
-        self.gallery_canvas.itemconfigure(self.gallery_window, width=event.width)
+    def _scroll_gallery(self, event):
+        if not self.gallery_frame.winfo_ismapped():
+            return
+        delta = event.delta
+        if not delta:
+            return
+        if abs(delta) >= 120:
+            steps = int(-delta / 120)
+        else:
+            steps = -int(delta)
+            if steps == 0 and delta:
+                steps = -1 if delta > 0 else 1
+        return self._scroll_gallery_by(steps)
+
+    def _scroll_gallery_touchpad(self, event):
+        if not self.gallery_frame.winfo_ismapped():
+            return
+
+        delta_y = event.delta & 0xFFFF
+        if delta_y & 0x8000:
+            delta_y -= 0x10000
+        if not delta_y:
+            return "break"
+
+        bounds = self.gallery_canvas.bbox("all")
+        if not bounds:
+            return "break"
+        content_height = bounds[3] - bounds[1]
+        if content_height > 0:
+            current_position = self.gallery_canvas.yview()[0]
+            self.gallery_canvas.yview_moveto(
+                current_position - delta_y / content_height
+            )
+        return "break"
+
+    def _scroll_gallery_by(self, steps):
+        if steps and self.gallery_frame.winfo_ismapped():
+            self.gallery_canvas.yview_scroll(steps, "units")
+            return "break"
 
     def _reset_grid_cuts(self):
         self.vertical_cuts = [
