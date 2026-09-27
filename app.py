@@ -8,6 +8,10 @@ from PIL import Image, ImageOps, ImageTk
 
 class PhotoSplitter:
     PREVIEW_PADDING = 12
+    MAX_GRID_DIMENSION = 20
+    SYSTEM_BACKGROUND = "systemWindowBackgroundColor"
+    SYSTEM_TEXT = "systemTextColor"
+    SYSTEM_ACCENT = "systemControlAccentColor"
 
     def __init__(self, root):
         self.root = root
@@ -25,13 +29,24 @@ class PhotoSplitter:
         self.preview_box = None
         self.dragging_line = None
 
-        self.vertical_position = tk.IntVar(value=50)
-        self.horizontal_position = tk.IntVar(value=50)
+        self.grid_columns = 2
+        self.grid_rows = 2
+        self.vertical_cuts = [50.0]
+        self.horizontal_cuts = [50.0]
+        self.grid_columns_var = tk.IntVar(value=self.grid_columns)
+        self.grid_rows_var = tk.IntVar(value=self.grid_rows)
 
+        self._configure_theme()
         self._build_ui()
 
+    def _configure_theme(self):
+        self.root.configure(background=self.SYSTEM_BACKGROUND)
+        self.style = ttk.Style(self.root)
+        if "aqua" in self.style.theme_names():
+            self.style.theme_use("aqua")
+
     def _build_ui(self):
-        self.gallery_frame = ttk.Frame(self.root, padding=16)
+        self.gallery_frame = ttk.Frame(self.root)
         self.gallery_frame.pack(fill="both", expand=True)
         self.gallery_frame.columnconfigure(0, weight=1)
         self.gallery_frame.rowconfigure(2, weight=1)
@@ -41,12 +56,16 @@ class PhotoSplitter:
             text="Scan Gallery",
             font=("TkDefaultFont", 18, "bold"),
         )
-        gallery_heading.grid(row=0, column=0, sticky="w")
+        gallery_heading.grid(row=0, column=0, sticky="w", padx=16, pady=(16, 0))
 
         gallery_toolbar = ttk.Frame(self.gallery_frame)
-        gallery_toolbar.grid(row=1, column=0, sticky="ew", pady=(12, 12))
+        gallery_toolbar.grid(
+            row=1, column=0, sticky="ew", padx=16, pady=(12, 12)
+        )
         ttk.Button(
-            gallery_toolbar, text="Add Scans...", command=self.add_images
+            gallery_toolbar,
+            text="Add Scans...",
+            command=self.add_images,
         ).pack(side="left")
         self.open_selected_button = ttk.Button(
             gallery_toolbar,
@@ -66,21 +85,20 @@ class PhotoSplitter:
         self.gallery_status.pack(side="right")
 
         gallery_area = ttk.Frame(self.gallery_frame)
-        gallery_area.grid(row=2, column=0, sticky="nsew")
+        gallery_area.grid(row=2, column=0, sticky="nsew", padx=16, pady=(0, 16))
         gallery_area.columnconfigure(0, weight=1)
         gallery_area.rowconfigure(0, weight=1)
         self.gallery_canvas = tk.Canvas(
             gallery_area,
-            background="#e8e8e8",
+            background=self.SYSTEM_BACKGROUND,
             highlightthickness=1,
-            highlightbackground="#c7c7c7",
         )
         self.gallery_canvas.grid(row=0, column=0, sticky="nsew")
-        gallery_scrollbar = ttk.Scrollbar(
+        self.gallery_scrollbar = ttk.Scrollbar(
             gallery_area, orient="vertical", command=self.gallery_canvas.yview
         )
-        gallery_scrollbar.grid(row=0, column=1, sticky="ns")
-        self.gallery_canvas.configure(yscrollcommand=gallery_scrollbar.set)
+        self.gallery_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.gallery_canvas.configure(yscrollcommand=self.gallery_scrollbar.set)
         self.gallery_inner = ttk.Frame(self.gallery_canvas)
         self.gallery_window = self.gallery_canvas.create_window(
             0, 0, window=self.gallery_inner, anchor="nw"
@@ -94,12 +112,14 @@ class PhotoSplitter:
         self.editor_frame.columnconfigure(0, weight=1)
         self.editor_frame.rowconfigure(2, weight=1)
         editor_toolbar = ttk.Frame(self.editor_frame)
-        editor_toolbar.grid(row=0, column=0, sticky="ew")
+        editor_toolbar.grid(row=0, column=0, sticky="ew", padx=16, pady=(16, 0))
         ttk.Button(
             editor_toolbar, text="Back to Gallery", command=self.show_gallery
         ).pack(side="left")
         self.open_button = ttk.Button(
-            editor_toolbar, text="Add More Scans...", command=self.add_images
+            editor_toolbar,
+            text="Add More Scans...",
+            command=self.add_images,
         )
         self.open_button.pack(side="left", padx=(8, 0))
         self.file_label = ttk.Label(editor_toolbar, text="No image selected")
@@ -107,38 +127,74 @@ class PhotoSplitter:
 
         self.canvas = tk.Canvas(
             self.editor_frame,
-            background="#e8e8e8",
+            background=self.SYSTEM_BACKGROUND,
             highlightthickness=1,
-            highlightbackground="#c7c7c7",
         )
-        self.canvas.grid(row=2, column=0, sticky="nsew", pady=(12, 0))
+        self.canvas.grid(
+            row=2, column=0, sticky="nsew", padx=16, pady=(12, 0)
+        )
         self.canvas.bind("<Configure>", self._draw_preview)
         self.canvas.bind("<ButtonPress-1>", self._start_drag)
         self.canvas.bind("<B1-Motion>", self._drag_line)
         self.canvas.bind("<ButtonRelease-1>", self._stop_drag)
         self.canvas.bind("<Motion>", self._update_cursor)
         self.canvas_open_button = ttk.Button(
-            self.canvas, text="Choose Scan...", command=self.add_images
+            self.canvas,
+            text="Choose Scan...",
+            command=self.add_images,
         )
         self.canvas_open_button_window = self.canvas.create_window(
             0, 0, window=self.canvas_open_button, state="hidden"
         )
 
         action_bar = ttk.Frame(self.editor_frame)
-        action_bar.grid(row=3, column=0, sticky="ew", pady=(12, 0))
-        action_bar.columnconfigure(0, weight=1)
+        action_bar.grid(row=3, column=0, sticky="ew", padx=16, pady=(12, 0))
+        action_bar.columnconfigure(1, weight=1)
+        grid_selector = ttk.Frame(action_bar)
+        grid_selector.grid(row=0, column=0, sticky="w")
+        ttk.Label(grid_selector, text="Grid:").pack(side="left", padx=(0, 6))
+        self.columns_spinbox = ttk.Spinbox(
+            grid_selector,
+            from_=1,
+            to=self.MAX_GRID_DIMENSION,
+            width=3,
+            textvariable=self.grid_columns_var,
+            command=self._grid_dimensions_changed,
+            justify="center",
+        )
+        self.columns_spinbox.pack(side="left")
+        ttk.Label(grid_selector, text="×").pack(side="left", padx=5)
+        self.rows_spinbox = ttk.Spinbox(
+            grid_selector,
+            from_=1,
+            to=self.MAX_GRID_DIMENSION,
+            width=3,
+            textvariable=self.grid_rows_var,
+            command=self._grid_dimensions_changed,
+            justify="center",
+        )
+        self.rows_spinbox.pack(side="left")
+        self.columns_spinbox.bind("<Return>", self._grid_dimensions_changed)
+        self.columns_spinbox.bind("<FocusOut>", self._grid_dimensions_changed)
+        self.rows_spinbox.bind("<Return>", self._grid_dimensions_changed)
+        self.rows_spinbox.bind("<FocusOut>", self._grid_dimensions_changed)
         self.hint_label = ttk.Label(
             action_bar, text="Drag the red cut lines to adjust the grid."
         )
-        self.hint_label.grid(row=0, column=0, sticky="w")
+        self.hint_label.grid(row=0, column=1, sticky="w", padx=(16, 0))
         self.save_as_button = ttk.Button(
             action_bar, text="Save As...", command=self.save_as, state="disabled"
         )
-        self.save_as_button.grid(row=0, column=1, padx=(8, 0))
+        self.save_as_button.grid(row=0, column=2, padx=(8, 0))
         self.save_button = ttk.Button(
-            self.editor_frame, text="Save", command=self.save_default, state="disabled"
+            self.editor_frame,
+            text="Save",
+            command=self.save_default,
+            state="disabled",
         )
-        self.save_button.grid(row=4, column=0, sticky="e", pady=(8, 0))
+        self.save_button.grid(
+            row=4, column=0, sticky="e", padx=16, pady=(8, 16)
+        )
 
     def add_images(self):
         paths = filedialog.askopenfilenames(
@@ -202,8 +258,7 @@ class PhotoSplitter:
         self.gallery_selected_index = index
         self.image = image
         self.image_path = path
-        self.vertical_position.set(50)
-        self.horizontal_position.set(50)
+        self._reset_grid_cuts()
         self.file_label.configure(text=os.path.basename(path))
         self.save_button.configure(state="normal")
         self.save_as_button.configure(state="normal")
@@ -227,7 +282,9 @@ class PhotoSplitter:
         self.gallery_selected_index = index
         for card_index, card in enumerate(self.gallery_cards):
             card.configure(
-                highlightbackground="#3478c9" if card_index == index else "#c7c7c7",
+                highlightbackground=(
+                    self.SYSTEM_ACCENT if card_index == index else self.SYSTEM_BACKGROUND
+                ),
                 highlightthickness=2 if card_index == index else 1,
             )
         state = "normal" if self.gallery_selected_index is not None else "disabled"
@@ -255,19 +312,22 @@ class PhotoSplitter:
                     continue
                 card = tk.Frame(
                     self.gallery_inner,
-                    background="#ffffff",
-                    highlightbackground="#c7c7c7",
+                    background=self.SYSTEM_BACKGROUND,
+                    highlightbackground=self.SYSTEM_BACKGROUND,
                     highlightthickness=1,
                     padx=8,
                     pady=8,
                 )
                 card.grid(row=index // 4, column=index % 4, padx=8, pady=8, sticky="n")
-                image_label = tk.Label(card, image=thumbnail, background="#ffffff")
+                image_label = tk.Label(
+                    card, image=thumbnail, background=self.SYSTEM_BACKGROUND
+                )
                 image_label.pack()
                 name_label = tk.Label(
                     card,
                     text=os.path.basename(path),
-                    background="#ffffff",
+                    background=self.SYSTEM_BACKGROUND,
+                    foreground=self.SYSTEM_TEXT,
                     wraplength=190,
                 )
                 name_label.pack(pady=(6, 0))
@@ -289,9 +349,39 @@ class PhotoSplitter:
 
     def _update_gallery_scroll(self, _event=None):
         self.gallery_canvas.configure(scrollregion=self.gallery_canvas.bbox("all"))
+        if self.gallery_inner.winfo_reqheight() > self.gallery_canvas.winfo_height():
+            self.gallery_scrollbar.grid()
+        else:
+            self.gallery_scrollbar.grid_remove()
 
     def _resize_gallery_inner(self, event):
         self.gallery_canvas.itemconfigure(self.gallery_window, width=event.width)
+
+    def _reset_grid_cuts(self):
+        self.vertical_cuts = [
+            index * 100.0 / self.grid_columns
+            for index in range(1, self.grid_columns)
+        ]
+        self.horizontal_cuts = [
+            index * 100.0 / self.grid_rows
+            for index in range(1, self.grid_rows)
+        ]
+
+    def _grid_dimensions_changed(self, _event=None):
+        try:
+            columns = int(self.grid_columns_var.get())
+            rows = int(self.grid_rows_var.get())
+        except (TypeError, ValueError, tk.TclError):
+            return
+
+        columns = max(1, min(self.MAX_GRID_DIMENSION, columns))
+        rows = max(1, min(self.MAX_GRID_DIMENSION, rows))
+        self.grid_columns = columns
+        self.grid_rows = rows
+        self.grid_columns_var.set(columns)
+        self.grid_rows_var.set(rows)
+        self._reset_grid_cuts()
+        self._draw_preview()
 
     def _draw_preview(self, _value=None):
         self.canvas.delete("preview")
@@ -304,7 +394,7 @@ class PhotoSplitter:
                 center_x,
                 center_y - 26,
                 text="Choose a scanned page",
-                fill="#333333",
+                fill=self.SYSTEM_TEXT,
                 font=("TkDefaultFont", 13, "bold"),
                 tags="empty-message",
             )
@@ -331,53 +421,71 @@ class PhotoSplitter:
         self.canvas.create_image(
             left, top, image=self.preview_photo, anchor="nw", tags="preview"
         )
-        cut_x = left + preview.width * self.vertical_position.get() / 100
-        cut_y = top + preview.height * self.horizontal_position.get() / 100
-        self.canvas.create_line(
-            cut_x,
-            top,
-            cut_x,
-            bottom,
-            fill="#d8342a",
-            width=4,
-            tags=("preview", "cut-line", "vertical-line"),
-        )
-        self.canvas.create_line(
-            left,
-            cut_y,
-            right,
-            cut_y,
-            fill="#d8342a",
-            width=4,
-            tags=("preview", "cut-line", "horizontal-line"),
-        )
+        for index, position in enumerate(self.vertical_cuts):
+            cut_x = left + preview.width * position / 100
+            self.canvas.create_line(
+                cut_x,
+                top,
+                cut_x,
+                bottom,
+                fill=self.SYSTEM_ACCENT,
+                width=4,
+                tags=("preview", "cut-line", "vertical-line", "vertical-{}".format(index)),
+            )
+        for index, position in enumerate(self.horizontal_cuts):
+            cut_y = top + preview.height * position / 100
+            self.canvas.create_line(
+                left,
+                cut_y,
+                right,
+                cut_y,
+                fill=self.SYSTEM_ACCENT,
+                width=4,
+                tags=("preview", "cut-line", "horizontal-line", "horizontal-{}".format(index)),
+            )
 
     def _start_drag(self, event):
         if self.image is None or self.preview_box is None:
             return
 
         left, top, right, bottom = self.preview_box
-        cut_x = left + (right - left) * self.vertical_position.get() / 100
-        cut_y = top + (bottom - top) * self.horizontal_position.get() / 100
         tolerance = 12
-        if abs(event.x - cut_x) <= tolerance and top <= event.y <= bottom:
-            self.dragging_line = "vertical"
-        elif abs(event.y - cut_y) <= tolerance and left <= event.x <= right:
-            self.dragging_line = "horizontal"
-        else:
-            self.dragging_line = None
+        nearby_lines = []
+        if top <= event.y <= bottom:
+            for index, position in enumerate(self.vertical_cuts):
+                coordinate = left + (right - left) * position / 100
+                distance = abs(event.x - coordinate)
+                if distance <= tolerance:
+                    nearby_lines.append((distance, "vertical", index))
+        if left <= event.x <= right:
+            for index, position in enumerate(self.horizontal_cuts):
+                coordinate = top + (bottom - top) * position / 100
+                distance = abs(event.y - coordinate)
+                if distance <= tolerance:
+                    nearby_lines.append((distance, "horizontal", index))
+        self.dragging_line = None
+        if nearby_lines:
+            _, direction, index = min(nearby_lines)
+            self.dragging_line = (direction, index)
 
     def _drag_line(self, event):
         if self.dragging_line is None or self.preview_box is None:
             return
 
         left, top, right, bottom = self.preview_box
-        if self.dragging_line == "vertical":
+        direction, index = self.dragging_line
+        if direction == "vertical":
             position = (event.x - left) / max(right - left, 1) * 100
-            self.vertical_position.set(round(max(10, min(90, position))))
+            cuts = self.vertical_cuts
+            dimension = self.grid_columns
         else:
             position = (event.y - top) / max(bottom - top, 1) * 100
-            self.horizontal_position.set(round(max(10, min(90, position))))
+            cuts = self.horizontal_cuts
+            dimension = self.grid_rows
+        gap = min(2.0, 100.0 / dimension / 2)
+        minimum = cuts[index - 1] + gap if index > 0 else gap
+        maximum = cuts[index + 1] - gap if index + 1 < len(cuts) else 100 - gap
+        cuts[index] = max(minimum, min(maximum, position))
         self._draw_preview()
 
     def _stop_drag(self, _event):
@@ -389,11 +497,15 @@ class PhotoSplitter:
             return
 
         left, top, right, bottom = self.preview_box
-        cut_x = left + (right - left) * self.vertical_position.get() / 100
-        cut_y = top + (bottom - top) * self.horizontal_position.get() / 100
         tolerance = 12
-        on_vertical = abs(event.x - cut_x) <= tolerance and top <= event.y <= bottom
-        on_horizontal = abs(event.y - cut_y) <= tolerance and left <= event.x <= right
+        on_vertical = top <= event.y <= bottom and any(
+            abs(event.x - (left + (right - left) * position / 100)) <= tolerance
+            for position in self.vertical_cuts
+        )
+        on_horizontal = left <= event.x <= right and any(
+            abs(event.y - (top + (bottom - top) * position / 100)) <= tolerance
+            for position in self.horizontal_cuts
+        )
         if on_vertical and on_horizontal:
             cursor = "crosshair"
         elif on_vertical:
@@ -409,13 +521,12 @@ class PhotoSplitter:
 
     def _crop_boxes(self):
         width, height = self.image.size
-        cut_x = round(width * self.vertical_position.get() / 100)
-        cut_y = round(height * self.horizontal_position.get() / 100)
-        return (
-            (0, 0, cut_x, cut_y),
-            (cut_x, 0, width, cut_y),
-            (0, cut_y, cut_x, height),
-            (cut_x, cut_y, width, height),
+        x_edges = [0] + [round(width * cut / 100) for cut in self.vertical_cuts] + [width]
+        y_edges = [0] + [round(height * cut / 100) for cut in self.horizontal_cuts] + [height]
+        return tuple(
+            (x_edges[column], y_edges[row], x_edges[column + 1], y_edges[row + 1])
+            for row in range(self.grid_rows)
+            for column in range(self.grid_columns)
         )
 
     def _next_number(self, output_dir, prefix):
@@ -430,12 +541,13 @@ class PhotoSplitter:
     def _save_crops(self, output_dir, prefix, extension):
         number = self._next_number(output_dir, prefix)
         image_format = "JPEG" if extension.lower() in (".jpg", ".jpeg") else "PNG"
+        crop_boxes = self._crop_boxes()
         paths = [
             os.path.join(output_dir, "{}_{}{}".format(prefix, number + index, extension))
-            for index in range(4)
+            for index in range(len(crop_boxes))
         ]
         try:
-            for box, path in zip(self._crop_boxes(), paths):
+            for box, path in zip(crop_boxes, paths):
                 crop = self.image.crop(box)
                 if image_format == "JPEG" and crop.mode == "RGBA":
                     crop = crop.convert("RGB")
@@ -445,7 +557,7 @@ class PhotoSplitter:
             return False
 
         messagebox.showinfo(
-            "Done", "4 photos were saved to:\n{}".format(output_dir)
+            "Done", "{} photos were saved to:\n{}".format(len(crop_boxes), output_dir)
         )
         return True
 
